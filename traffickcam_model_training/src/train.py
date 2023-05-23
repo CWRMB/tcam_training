@@ -5,6 +5,7 @@ import time
 
 import pickle
 import numpy as np
+import timm
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -13,7 +14,7 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from timm import models
+from timm import *
 
 from pytorch_metric_learning import miners, losses, samplers
 from pytorch_metric_learning.utils import accuracy_calculator
@@ -93,7 +94,7 @@ parser.add_argument('--tags', default=['FullTraffickCam'], type=str, nargs='*',
                     help='Tags to be sent to logger')
 parser.add_argument('--loss', default='triplet_margin_loss', type=str,
                     help='loss to be used in training, choose one of {}'.format(loss.names()))
-parser.add_argument('--model', default='resnet50', type=str,
+parser.add_argument('--model', default='vit_base_patch8', type=str,
                     help='model to be used in training, choose one of {}'
                     .format([model for model in list(models.__dict__) if model[0] != "_"]))
 parser.add_argument('--tsne', default=False, type=bool,
@@ -129,7 +130,9 @@ def main():
     #model = torch.nn.Sequential(model, SqueezeLastLayer())
     #model = torch.nn.Sequential(model, torch.nn.Linear(2048, 256))  # 256 dimensional final layer
     #     if len(os.environ['CUDA_VISIBLE_DEVICES']) > 1:
-    model = models.vit_base_patch8_224(pretrained=True)
+    model = timm.create_model('vit_deit_small_patch16_224', img_size=256, pretrained=True)
+    model.pos_embed.shape
+    torch.Size([1, 257, 384])
     model = torch.nn.DataParallel(model).to(device)
 
     accuracies_dict = {'train': {}, 'val': {}}

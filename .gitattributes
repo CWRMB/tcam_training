@@ -3,3 +3,4 @@
 /sets/train_imgs.dat filter=lfs diff=lfs merge=lfs -text
 /sets/train_queries.dat filter=lfs diff=lfs merge=lfs -text
 /sets/validation_queries.dat filter=lfs diff=lfs merge=lfs -text
+*.dat filter=lfs diff=lfs merge=lfs -text
