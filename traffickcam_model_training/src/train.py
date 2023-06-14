@@ -5,7 +5,6 @@ import time
 
 import pickle
 import numpy as np
-import timm
 import torch
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -15,12 +14,12 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 
 from timm import *
+import random
 
 from pytorch_metric_learning import miners, losses, samplers
 from pytorch_metric_learning.utils import accuracy_calculator
 import faiss
 import neptune
-import matplotlib.pyplot as plt
 
 from traffickcam_folder import TraffickcamFolderPaths
 from traffickcam_sampler import TraffickcamSampler
@@ -40,19 +39,19 @@ def str2bool(v):
 
 
 parser = argparse.ArgumentParser(description='PyTorch Traffickcam Training')
-parser.add_argument('--training_images', default='./sets/train_imgs.dat', type=str,
+parser.add_argument('--training_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_imgs.dat', type=str,
                     help='pickle list of images used to train model')
-parser.add_argument('--val_query_images', default='./sets/validation_queries.dat', type=str,
+parser.add_argument('--val_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/validation_queries.dat', type=str,
                     help='pickle list of validation images used for queries to measure accuracy')
-parser.add_argument('--train_query_images', default='./sets/train_queries.dat', type=str,
+parser.add_argument('--train_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_queries.dat', type=str,
                     help='set of training images used for queries to measure accuracy')
-parser.add_argument('--gallery_images', default='./sets/gallery_imgs.dat', type=str,
+parser.add_argument('--gallery_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/gallery_imgs.dat', type=str,
                     help='set of training images that are used in the gallery to measure train and validation accuracy')
 parser.add_argument('--capture_id_file', default=None, type=str,
                     help='Pandas DF for image capture')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=25, type=int, metavar='N',
+parser.add_argument('--epochs', default=24, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -60,7 +59,7 @@ parser.add_argument('--percent_masked', default=.4, type=float,
                     help='percent of each image masked during training')
 parser.add_argument('--batch_duplication', default=False, type=bool,
                     help='whether or not to duplicate batches with masked images')
-parser.add_argument('-b', '--batch-size', default=120, type=int,
+parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size (before duplication)')
 parser.add_argument('--lr', '--learning-rate', default=0.00001, type=float,
                     metavar='LR', help='initial learning rate')
@@ -80,7 +79,7 @@ parser.add_argument('--pretrained', const=True, default=True, type=str2bool, nar
                     help='use pre-trained model')
 parser.add_argument('--use_gpu', type=bool, default=True,
                     help='Whether or not to use GPUs')
-parser.add_argument('--gpu', type=int, default=[0, 1, 2, 3], nargs='+',
+parser.add_argument('--gpu', type=int, default=[0, 1], nargs='+',
                     help='GPUs to use')
 parser.add_argument('--m', default=10, type=int,
                     help='num class samples per batch')
@@ -88,13 +87,13 @@ parser.add_argument('--margin', default=0.1, type=float,
                     help='triplet loss margin')
 parser.add_argument('--keep_opt_parameters', const=True, default=False, type=str2bool, nargs='?',
                     help='use optimizer parameters loaded in checkpoint (if applicable) or use those specified in arguments')
-parser.add_argument('--name', default='',
+parser.add_argument('--name', default='vidarlab/tcamTraining',
                     help='Experiment name for logger')
 parser.add_argument('--tags', default=['FullTraffickCam'], type=str, nargs='*',
                     help='Tags to be sent to logger')
 parser.add_argument('--loss', default='triplet_margin_loss', type=str,
                     help='loss to be used in training, choose one of {}'.format(loss.names()))
-parser.add_argument('--model', default='vit_base_patch8', type=str,
+parser.add_argument('--model', default='vit_base_patch16', type=str,
                     help='model to be used in training, choose one of {}'
                     .format([model for model in list(models.__dict__) if model[0] != "_"]))
 parser.add_argument('--tsne', default=False, type=bool,
@@ -103,16 +102,13 @@ parser.add_argument('--knn_images', default=0, type=int,
                     help='the number of KNN images to log')
 parser.add_argument('--confusion_matrix', default=False, type=bool,
                     help='whether or not to generate and log confusion matrices after evaluation')
-parser.add_argument('--input_size', default=256, type=int,
+parser.add_argument('--input_size', default=224, type=int,
                     help='size of input images')
-
-run = neptune.init_run(
-    project="vidarlab/tcamTraining",
-    api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJjMzhhZjM5OS1kZjdjLTQ3MzAtODcyMS0yN2JiMWQyNDhhMGYifQ==",
-)
+parser.add_argument('--resize', default=256, type=int,
+                    help='resize image in transforms')
 
 def main():
-    torch.cuda.empty_cache()
+    #torch.cuda.empty_cache()
     global args, global_step
     global_step = 1
     args = parser.parse_args()
@@ -120,21 +116,17 @@ def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(x) for x in args.gpu)
     device = torch.device("cuda" if args.use_gpu else "cpu")
     print(device)
-    #os.environ['NEPTUNE_API_TOKEN'] = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiMWFiOGNjMzctOGFkOC00MDAyLThlZTQtYzdhZWYwZjczYTlhIn0="
+    os.environ['NEPTUNE_API_TOKEN'] = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJjMzhhZjM5OS1kZjdjLTQ3MzAtODcyMS0yN2JiMWQyNDhhMGYifQ=="
 
-    #neptune.init('SLUVisLab/TraffickCam')
-    # neptune.init('samblack15/TraffickCam')
+    model = models.vit_base_patch16_224_in21k(pretrained=True)
 
-    #model = models.__dict__[args.model](pretrained=args.pretrained)
-    #model = torch.nn.Sequential(*(list(model.children())[:-1]))
-    #model = torch.nn.Sequential(model, SqueezeLastLayer())
-    #model = torch.nn.Sequential(model, torch.nn.Linear(2048, 256))  # 256 dimensional final layer
-    #     if len(os.environ['CUDA_VISIBLE_DEVICES']) > 1:
-    model = timm.create_model('vit_deit_small_patch16_224', img_size=256, pretrained=True)
-    model.pos_embed.shape
-    torch.Size([1, 257, 384])
-    model = torch.nn.DataParallel(model).to(device)
+    model.head = torch.nn.Identity()
 
+    model.cuda()
+
+    model = torch.nn.DataParallel(model)
+    available_gpus = [torch.cuda.device(i) for i in range(torch.cuda.device_count())]
+    print("GPUS", available_gpus)
     accuracies_dict = {'train': {}, 'val': {}}
 
     loss_func = loss.create(args.loss, margin=args.margin)
@@ -144,6 +136,7 @@ def main():
     params = {
         'learning_rate': args.lr,
         'pretrained': args.pretrained,
+        'optimizer': 'Adam',
         'margin': args.margin,
         'batch_size': args.batch_size,
         'group_size': args.m,
@@ -153,15 +146,9 @@ def main():
         'using_batch_duplication': args.batch_duplication,
         'input_size': args.input_size,
     }
-    # anything hardcoded in
-    props = {
-        'optimizer': 'Adam'
-    }
-    logger = neptune.create_experiment(args.name,
-                                       properties=props,
-                                       params=params,
-                                       tags=args.tags,
-                                       upload_source_files=['./src/*'])
+
+    logger = neptune.init_run(project=args.name)
+    logger["parameters"] = params
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -187,9 +174,9 @@ def main():
                                      std=[0.229, 0.224, 0.225])
     rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
     color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [rotate, color_jitter, transforms.RandomResizedCrop(params['input_size']-32), transforms.RandomHorizontalFlip(),
+    train_transforms = [transforms.Resize(args.input_size), transforms.RandomCrop(224), rotate, color_jitter, transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(), normalize]
-    test_transforms = [transforms.Resize(args.input_size), transforms.CenterCrop(params['input_size']-32), transforms.ToTensor(), normalize]
+    test_transforms = [transforms.Resize(args.input_size), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
 
     # load pickle lists containing the paths to each image set
     with open(args.training_images, 'rb') as f:
@@ -216,6 +203,20 @@ def main():
                 id_to_capture[str(ids[i])] = captures[i]
     else:
         id_to_capture = None
+
+    # Skip .txt invalid image formats within the file directory
+    train_set = [file for file in train_set if not file.endswith(".txt")]
+    gallery_images = [file for file in gallery_images if not file.endswith(".txt")]
+    val_queries = [file for file in val_queries if not file.endswith(".txt")]
+    train_queries = [file for file in train_queries if not file.endswith(".txt")]
+
+    # TODO REMOVE
+    # Select a subset of 100 images
+    # random.seed(42)
+    # train_set = random.sample(train_set, 1000)
+    # gallery_images = random.sample(gallery_images, 1000)
+    # val_queries = random.sample(val_queries, 1000)
+    # train_queries = random.sample(train_queries, 1000)
 
     train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=id_to_capture)
@@ -264,10 +265,10 @@ def main():
         'knn_images': visualizations.create('knn_images', logger, args.knn_images) if args.knn_images > 0 else None,
         'confusion_matrix': visualizations.create('confusion_matrix', logger) if args.confusion_matrix else None,
     }
-
     print('Beginning training')
     for epoch in range(args.start_epoch, args.epochs):
         train(model, epoch, loaders_dict, accuracies_dict, loss_func, optimizer, visualizers, acc_calculator, logger, device)
+
 
 
 def generate_random_masks(data, percentage):
@@ -311,24 +312,24 @@ def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizer
             query_embeddings, query_labels, query_paths = embed(loaders['train_query'], model)
             gal_embeddings, gal_labels, gal_paths = embed(loaders['gallery'], model)
             accuracies, knn_labels = get_accuracies(acc_calculator, gal_embeddings, query_embeddings, gal_labels, query_labels)
-            
+
             print(gal_labels[0]), print(gal_paths[0])
-            
+
             outputs['training'] = {
-                'embeddings': query_embeddings, 
-                'labels': query_labels, 
-                'paths': query_paths, 
+                'embeddings': query_embeddings,
+                'labels': query_labels,
+                'paths': query_paths,
                 'knn_labels': knn_labels
             }
             outputs['gallery'] = {
-                'embeddings': gal_embeddings, 
-                'labels': gal_labels, 
+                'embeddings': gal_embeddings,
+                'labels': gal_labels,
                 'paths': gal_paths
             }
 
             accuracy_dict['train'][global_step] = accuracies
             log_accuracies('train', accuracies[:3], logger)
-            logger.log_metric('train_duplicates', accuracies[3])
+            logger["Train/duplicates"].append(accuracies[3])
             print('Train accuracy: {}'.format(accuracies))
             torch.cuda.empty_cache()
 
@@ -342,7 +343,7 @@ def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizer
             query_embeddings, query_labels, query_paths = embed(loaders['val_query'], model)
             accuracies, knn_labels = get_accuracies(acc_calculator, gal_embeddings, query_embeddings, gal_labels, query_labels)
             outputs['validation'] = {
-                'embeddings': query_embeddings, 
+                'embeddings': query_embeddings,
                 'labels': query_labels,
                 'paths': query_paths,
                 'knn_labels': knn_labels
@@ -350,7 +351,7 @@ def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizer
 
             accuracy_dict['val'][global_step] = accuracies
             log_accuracies('val', accuracies[:3], logger)
-            logger.log_metric('val_duplicates', accuracies[3])
+            logger["Val/duplicates"].append(accuracies[3])
             print('Val accuracy: {}'.format(accuracies))
             if accuracies[k_index] > best_acc:
                 is_best = True
@@ -381,13 +382,13 @@ def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizer
             input = torch.cat([input, masked_batch])
             target = target.repeat(2)
         target = target.to(device)
-        input_var = torch.autograd.Variable(input)
+        input = input.to(device)
         # compute output
-        model_output = model(input_var)
+        model_output = model(input)
         loss = loss_func(model_output, target)
 
         # record loss
-        logger.log_metric('train_loss', loss.item())
+        logger["Train/loss"].append(loss.item())
         losses.update(loss.item(), input.size(0))
 
         # compute gradient and do SGD step
@@ -424,6 +425,7 @@ def embed(data_loader, model):
     model.eval()
     with torch.no_grad():
         for i, (inputs, labels, paths) in enumerate(data_loader):
+            inputs = inputs.cuda()
             embeddings = model(inputs)
             all_embeddings = torch.cat((all_embeddings, embeddings.detach().cpu()))
             all_labels = torch.cat((all_labels, labels))
@@ -433,17 +435,17 @@ def embed(data_loader, model):
 
 def save_checkpoint(state, logger, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, './models/latest_{}'.format(filename))
-    logger.log_artifact('./models/latest_{}'.format(filename))
+    #logger.log_artifact('./models/latest_{}'.format(filename))
     if is_best:
         shutil.copyfile('./models/latest_{}'.format(filename), './models/best_{}'.format(filename))
-        logger.log_artifact('./models/best_{}'.format(filename))
+        #logger.log_artifact('./models/best_{}'.format(filename))
 
 
 def log_accuracies(phase, accuracies, logger):
-    logger.log_metric('{}_acc'.format(phase), accuracies[0])
+    logger["{}/acc".format(phase)].append(accuracies[0])
     for idx, accuracy in enumerate(accuracies):
         k = [1, 10, 100]
-        logger.log_metric('{}_retrieval_at_{}'.format(phase, k[idx]), accuracy)
+        logger["{}/retrieval_at_{}".format(phase, k[idx])].append(accuracy)
 
 
 def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels, query_labels,
@@ -451,8 +453,8 @@ def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels,
     faiss.normalize_L2(ref_embeddings)
     faiss.normalize_L2(query_embeddings)
     accuracies = acc_calculator.get_accuracy(query_embeddings,
-                                             ref_embeddings,
                                              query_labels,
+                                             ref_embeddings,
                                              ref_labels,
                                              embeddings_come_from_same_source)
     # just return retrieval for now                                            
@@ -464,21 +466,22 @@ def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels,
 
 class AccCalculator(accuracy_calculator.AccuracyCalculator):
     def calculate_precision_at_1(self, knn_labels, query_labels, **kwargs):
-        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 1, self.avg_of_avgs)
+        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 1, self.avg_of_avgs, return_per_class=False, label_comparison_fn=torch.eq)
 
     def calculate_precision_at_5(self, knn_labels, query_labels, **kwargs):
-        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 5, self.avg_of_avgs)
+        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 5, self.avg_of_avgs, return_per_class=False, label_comparison_fn=torch.eq)
 
     def calculate_precision_at_10(self, knn_labels, query_labels, **kwargs):
-        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 10, self.avg_of_avgs)
+        return accuracy_calculator.precision_at_k(knn_labels, query_labels[:, None], 10, self.avg_of_avgs, return_per_class=False, label_comparison_fn=torch.eq)
 
     def calculate_knn_labels(self, knn_labels, query_labels, **kwargs):
         return knn_labels
 
     def retrieval_at_k(self, k, knn_labels, query_labels):
         curr_knn_labels = knn_labels[:, :k]
-        accuracy_per_sample = np.apply_along_axis(any, axis=1, arr=(curr_knn_labels == query_labels[:, None]))
-        return accuracy_calculator.maybe_get_avg_of_avgs(accuracy_per_sample, query_labels, self.avg_of_avgs)
+        accuracy_per_sample = np.apply_along_axis(any, axis=1, arr=(curr_knn_labels == query_labels[:, None]).cpu())
+        accuracy_per_sample = torch.tensor(accuracy_per_sample).to(query_labels.device).float()
+        return accuracy_calculator.maybe_get_avg_of_avgs(accuracy_per_sample, query_labels, self.avg_of_avgs, return_per_class=False)
 
     def calculate_retrieval_at_1(self, knn_labels, query_labels, **kwargs):
         return self.retrieval_at_k(1, knn_labels, query_labels)

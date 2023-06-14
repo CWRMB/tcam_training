@@ -5,8 +5,8 @@ import pickle
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--directory', default='/home/tuj54686/trafikcam/tcam_rest_api/helpers/faissworkflow/images3')
-parser.add_argument('--info', default='/home/tuj54686/trafikcam/tcam_rest_api/helpers/faissworkflow/hotelimageinfo.pkl')
+parser.add_argument('--directory', default='/shared/data/Traffickcam')
+parser.add_argument('--info', default='/shared/data/Traffickcam/hotelimageinfo.pkl')
 args = parser.parse_args()
 
 if __name__ == '__main__':
@@ -19,10 +19,18 @@ if __name__ == '__main__':
     i = 0
     for root, subdirs, filenames in sorted(os.walk(args.directory)):
         for filename in filenames:
-            image_id, hotel_id = filename.split('_')
-            hotel_id = hotel_id.split('.')[0]
+           # image_id, hotel_id = str(filename.split('_')[0]), str(filename.split('_')[1].split('.')[0])
+            filename_parts = filename.split('_')
+            if len(filename_parts) < 2:
+                print("Skipping file with unexepected format:", filename)
+                continue
+            image_id, hotel_id = str(filename_parts[0]), str(filename_parts[1].split('.')[0])
+            try:
+                capture_method = info[info['id'] == int(image_id)]['capture_method_id'].values[0]
+            except ValueError:
+                print("Error occured for image ID:", image_id)
+                continue
             path = os.path.join(os.sep.join(root.split(os.sep)), filename)
-            capture_method = info[info['id'] == int(image_id)]['capture_method_id'].values[0]
             if os.path.getsize(path) > 0:
                 if hotel_id not in hotel2img:
                     hotel2img[hotel_id] = [{'img': path, 'capture_method': capture_method}]
