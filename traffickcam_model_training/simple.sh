@@ -6,11 +6,11 @@
 #SBATCH --job-name="Tcam-Training"
 #SBATCH --mail-type=NONE
 #SBATCH --mail-user=tun78940@temple.edu
- 
+#SBATCH --cpus-per-task=10
+
 #Put commands down here
-# . miniconda3/etc/profile.d/conda.sh
-#conda init bash
 #conda activate
 cd /home/tun78940/tcam/tcam_training/traffickcam_model_training
-python3 src/train.py
+singularity exec --nv --bind /shared pytorch_23.03-py3.sif python3 src/resnet_eval.py
+#python3 src/resnet_eval.py
 

@@ -49,7 +49,7 @@ parser.add_argument('--gallery_images', default='/home/tun78940/tcam/tcam_traini
                     help='set of training images that are used in the gallery to measure train and validation accuracy')
 parser.add_argument('--capture_id_file', default=None, type=str,
                     help='Pandas DF for image capture')
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=24, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -71,7 +71,7 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--compute_accuracy_freq', default=6000, type=int,
                     help='after this many global steps accuracy is computed and model saved')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('--resume', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_checkpoint.pth.tar', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -147,7 +147,8 @@ def main():
         'input_size': args.input_size,
     }
 
-    logger = neptune.init_run(project=args.name)
+    # logger = neptune.init_run(project=args.name)
+    logger = neptune.init_run(project=args.name, with_id="TCAM-58")
     logger["parameters"] = params
 
     # optionally resume from a checkpoint
@@ -209,14 +210,6 @@ def main():
     gallery_images = [file for file in gallery_images if not file.endswith(".txt")]
     val_queries = [file for file in val_queries if not file.endswith(".txt")]
     train_queries = [file for file in train_queries if not file.endswith(".txt")]
-
-    # TODO REMOVE
-    # Select a subset of 100 images
-    # random.seed(42)
-    # train_set = random.sample(train_set, 1000)
-    # gallery_images = random.sample(gallery_images, 1000)
-    # val_queries = random.sample(val_queries, 1000)
-    # train_queries = random.sample(train_queries, 1000)
 
     train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=id_to_capture)
