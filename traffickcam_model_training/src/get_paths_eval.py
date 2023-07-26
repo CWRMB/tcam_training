@@ -17,11 +17,11 @@ from timm import models
 import random
 
 from collections import OrderedDict
-from traffickcam_folder_50k import TraffickcamFolderPaths
+from traffickcam_folder_50k import TraffickcamFolderPaths_50k
 from traffickcam_folder_50k import _extract_ids
 from resnet_eval import Model
 
-checkpoint_path_vit = "/home/tun78940/tcam/tcam_training/traffickcam_model_training/saved_models/latest_checkpoint_1.pth.tar"
+checkpoint_path_vit = "/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_25_648000_checkpoint.pth.tar"
 checkpoint_path = '/shared/data/Traffickcam/resnet50-hardnegative-02152021.pth'
 
 # Hard coded after we get the query image from running vit first
@@ -31,8 +31,8 @@ def main():
     device = torch.device("cuda")
     print(device)
 
-    # eval_vit()
-    eval_cnn()
+    eval_vit()
+    #eval_cnn()
 
 
 def get_distance(query_embed, val_embed, val_paths):
@@ -79,11 +79,11 @@ def eval_cnn():
 
     # TODO clean up duplicated code (did this so its easier to use both models)
 
-    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(model.transform),
+    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(model.transform),
                                           camera_type_dict=None)
-    val_folder = TraffickcamFolderPaths(val_set, classes=train_folder.classes,
+    val_folder = TraffickcamFolderPaths_50k(val_set, classes=train_folder.classes,
                                         transform=transforms.Compose(model.transform))
-    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
                                           transform=transforms.Compose(model.transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -125,20 +125,16 @@ def eval_vit():
 
     model.load_state_dict(state_dict)
 
-    model.eval()
-
-    # Define transformations
-    test_transform = [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(),
-                      transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                      ]
     # Specify image transforms
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
     color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [transforms.Resize(256), transforms.RandomCrop(224),
+    train_transforms = [transforms.Resize(224), transforms.RandomCrop(224),
                         rotate, color_jitter, transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(), normalize]
+    test_transform = [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(),
+                      normalize]
 
     train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/travel_website/*")
     val_set = glob.glob("/shared/data/Hotels-50K/images/val/*/*/travel_website/*")
@@ -147,11 +143,11 @@ def eval_vit():
     # Get one query image to embed
     query_set = random.sample(query_set, 1)
 
-    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
+    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=None)
-    val_folder = TraffickcamFolderPaths(val_set, classes=train_folder.classes,
+    val_folder = TraffickcamFolderPaths_50k(val_set, classes=train_folder.classes,
                                          transform=transforms.Compose(test_transform))
-    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
                                         transform=transforms.Compose(test_transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -168,8 +164,8 @@ def eval_vit():
 
     distances, indices, nearest_paths = get_distance(query_embeddings, val_embeddings, val_set)
 
-    print("Distances:", distances)
-    print("Indices:", indices)
+    # print("Distances:", distances)
+    # print("Indices:", indices)
 
     img_id, hotel_id = _extract_ids(query_set[0])
     print("Query path:", query_set[0], " ", f"IMG ID:{img_id}", f"Hotel ID:{hotel_id}")

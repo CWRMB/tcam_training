@@ -24,7 +24,7 @@ def _extract_ids(im_path):
     return img_id, hotel_id
 
 
-class TraffickcamFolderPaths(torch.utils.data.Dataset):
+class TraffickcamFolderPaths_50k(torch.utils.data.Dataset):
 
     def __init__(self, paths, classes=None, transform=None, camera_type_dict=None):
 

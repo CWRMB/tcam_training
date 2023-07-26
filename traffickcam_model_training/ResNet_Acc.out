@@ -1,0 +1,21 @@
+/home/tun78940/miniconda3/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/tun78940/miniconda3/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet50_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet50_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/home/tun78940/miniconda3/lib/python3.10/site-packages/torch/utils/data/dataloader.py:561: UserWarning: This DataLoader will create 100 worker processes in total. Our suggested max number of worker in current system is 48, which is smaller than what this DataLoader is going to create. Please be aware that excessive worker creation might get DataLoader running slow or even freeze, lower the worker number to avoid potential slowness/freeze if necessary.
+  warnings.warn(_create_warning_msg(
+cuda
+0 hotels missing out of 7632943
+0 hotels missing out of 37694
+0 hotels missing out of 53143
+evaluating model
+/home/tun78940/miniconda3/lib/python3.10/site-packages/faiss/contrib/torch_utils.py:51: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  x.storage().data_ptr() + x.storage_offset() * 4)
+/home/tun78940/miniconda3/lib/python3.10/site-packages/faiss/contrib/torch_utils.py:65: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  x.storage().data_ptr() + x.storage_offset() * 8)
+val/acc = 0.47010135650634766
+val/retrieval_at_1 =  0.47010135650634766
+val/retrieval_at_10 =  0.6407120823860168
+val/retrieval_at_100 =  0.7777100205421448
+Validation Duplicates: tensor(0.0124, device='cuda:0')
+Val accuracy: [0.47010135650634766, 0.6407120823860168, 0.7777100205421448, tensor(0.0124, device='cuda:0')]

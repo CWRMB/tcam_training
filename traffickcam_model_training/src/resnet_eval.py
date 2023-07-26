@@ -17,40 +17,42 @@ import glob
 import math
 import random
 
-from traffickcam_folder_50k import TraffickcamFolderPaths
+from torch.backends import cudnn
+
+from traffickcam_folder_50k import TraffickcamFolderPaths_50k
 from train import AccCalculator
 
 checkpoint_path = '/shared/data/Traffickcam/resnet50-hardnegative-02152021.pth'
-checkpoint_path_vit = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_checkpoint_2.pth.tar'
-
+checkpoint_path_vit = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_25_648000_checkpoint.pth.tar'
 
 
 def main():
     device = torch.device("cuda")
     print(device)
-
+    print("HOTELS-50K")
     # Eval ResNet-50 model for accuracy metrics on Hotels-50K
-    print("Evaluating accuracy for ResNet-50")
-    get_resnet()
+    # print("Evaluating accuracy for ResNet-50")
+    # get_resnet()
 
-    # # Eval ViT model for accuracy metrics on Hotels-50K
+    # Eval ViT model for accuracy metrics on Hotels-50K
     print("\n Evaluating accuracy for ViT")
+    print("Evaluating from checkpoint:", checkpoint_path_vit)
     get_vit()
 
 
 def get_resnet():
     model = Model(is_bulk=True)
 
-    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/travel_website/*")
-    query_set = glob.glob('/shared/data/Hotels-50K/images/test/*/*/traffickcam/*')
+    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
+    query_set = glob.glob('/shared/data/Hotels-50K/images/test/*/*/*/*')
 
-    # train_set = random.sample(train_set, 500)
-    # query_set = random.sample(query_set, 500)
+    # train_set = random.sample(train_set, 1000)
+    # query_set = random.sample(query_set, 1000)
 
     # Load the dataset through TraffickCamFolderPaths to retrieve paths, labels and targets
-    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(model.transform),
+    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(model.transform),
                                           camera_type_dict=None)
-    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
                                               transform=transforms.Compose(model.transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -90,10 +92,10 @@ def get_vit():
 
     model.load_state_dict(state_dict)
 
-    model.eval()
+    cudnn.benchmark = True
 
     # Define transformations
-    test_transform = [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(),
+    test_transform = [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(),
                       transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                       ]
     # Specify image transforms
@@ -101,20 +103,20 @@ def get_vit():
                                      std=[0.229, 0.224, 0.225])
     rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
     color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [transforms.Resize(256), transforms.RandomCrop(224),
+    train_transforms = [transforms.Resize(224), transforms.RandomCrop(224),
                         rotate, color_jitter, transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(), normalize]
 
     # Get our data from Hotels-50K
-    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/travel_website/*")
-    query_set = glob.glob("/shared/data/Hotels-50K/images/test/*/*/traffickcam/*")
+    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
+    query_set = glob.glob("/shared/data/Hotels-50K/images/test/*/*/*/*")
 
-    # train_set = random.sample(train_set, 500)
-    # query_set = random.sample(query_set, 500)
+    # train_set = random.sample(train_set, 1000)
+    # query_set = random.sample(query_set, 1000)
 
-    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
+    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=None)
-    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
                                           transform=transforms.Compose(test_transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -161,43 +163,57 @@ def eval_model(model, loaders, accuracy_dict, acc_calculator):
     torch.cuda.empty_cache()
 
 
+# def embed(data_loader, model):
+#     all_embeddings = torch.Tensor([])
+#     all_labels = torch.Tensor([])
+#     all_paths = []
+#
+#     model.eval()
+#     with torch.no_grad():
+#         for i, (inputs, labels, paths) in enumerate(data_loader):
+#             inputs = inputs.cuda()
+#             embeddings = model(inputs)
+#             all_embeddings = torch.cat((all_embeddings, embeddings.detach().cpu()))
+#             all_labels = torch.cat((all_labels, labels))
+#             all_paths = all_paths + paths
+#     return all_embeddings.numpy(), all_labels.numpy(), all_paths
+
+# Optimized embedding function
 def embed(data_loader, model):
-    all_embeddings = torch.Tensor([])
-    all_labels = torch.Tensor([])
+    num_images = len(data_loader.dataset)
+    if model.module.__class__.__name__ == 'ResNet':
+        print("Got ResNet")
+        embed_size = 256
+    else:
+        print("Got ViT")
+        embed_size = model.module.embed_dim
+
+    all_embeddings = torch.zeros(num_images, embed_size)
+    all_labels = torch.zeros(num_images)
     all_paths = []
 
     model.eval()
     with torch.no_grad():
+        start_index = 0
         for i, (inputs, labels, paths) in enumerate(data_loader):
             inputs = inputs.cuda()
-            embeddings = model(inputs)
-            all_embeddings = torch.cat((all_embeddings, embeddings.detach().cpu()))
-            all_labels = torch.cat((all_labels, labels))
-            all_paths = all_paths + paths
-    return all_embeddings.numpy(), all_labels.numpy(), all_paths
+            batch_size = inputs.size(0)
 
+            embeddings = model(inputs)
+
+            all_embeddings[start_index : start_index + batch_size] = embeddings.detach().cpu()
+            all_labels[start_index : start_index + batch_size] = labels
+            all_paths.extend(paths)
+
+            start_index += batch_size
+
+    return all_embeddings.numpy(), all_labels.numpy(), all_paths
 
 def log_accuracies(phase, accuracies):
     print("{}/acc =".format(phase), accuracies[0])
     for idx, accuracy in enumerate(accuracies):
         k = [1, 10, 100]
         print("{}/retrieval_at_{} = ".format(phase, k[idx]), accuracy)
-
-
-# def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels, query_labels,
-#                    embeddings_come_from_same_source=False):
-#     faiss.normalize_L2(ref_embeddings)
-#     faiss.normalize_L2(query_embeddings)
-#     accuracies = acc_calculator.get_accuracy(query_embeddings,
-#                                              query_labels,
-#                                              ref_embeddings,
-#                                              ref_labels,
-#                                              embeddings_come_from_same_source)
-#     # just return retrieval for now
-#     return [accuracies['retrieval_at_1'],
-#             accuracies['retrieval_at_10'],
-#             accuracies['retrieval_at_100'],
-#             accuracies['duplicates']], accuracies['knn_labels']
 
 
 def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels, query_labels,
@@ -245,6 +261,7 @@ class Model:
     def __init__(self, is_bulk):
         # Initialize the network graph and loads the weights
         # if is_bulk is set to True, use the GPU implementation
+        self.name = 'ResNet'
         self.output_sz = 256
         self.image_sz = 256
         self.batch_sz = 1
