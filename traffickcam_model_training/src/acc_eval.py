@@ -76,10 +76,10 @@ def get_vit():
                                      std=[0.229, 0.224, 0.225])
     rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
     color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [transforms.Resize(256), transforms.RandomCrop(224),
+    train_transforms = [transforms.Resize(224), transforms.RandomCrop(224),
                         rotate, color_jitter, transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(), normalize]
-    test_transforms = [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
+    test_transforms = [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
 
 
     # load pickle lists containing the paths to each image set
