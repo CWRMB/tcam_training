@@ -2,11 +2,11 @@
 This script is used for evaluating and embedding models from checkpoints.
 This script will return the image paths of nearest neighbors to a specified query image
 By default the query image will be randomly selected. This is meant to be used along with a
-Jupyter Notebook to then plot the images and view them.
+Jupyter Notebook to then plot the images and view them. 
 
-**
-This script will return results on Hotels-50K, If you are looking for the TCAM dataset
-see get_paths_tcam.py
+** 
+This file is used in conjuction to get_paths_eval.py, This file will return results
+on  the TCAM dataset while get_paths_eval.py will return results on Hotels50k.
 **
 """
 import glob
@@ -22,8 +22,8 @@ from timm import models
 import random
 
 from collections import OrderedDict
-from traffickcam_folder_50k import TraffickcamFolderPaths_50k
-from traffickcam_folder_50k import _extract_ids
+from traffickcam_folder import TraffickcamFolderPaths
+from traffickcam_folder import _extract_ids
 from resnet_eval import Model
 
 checkpoint_path_vit = "/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_25_648000_checkpoint.pth.tar"
@@ -75,20 +75,26 @@ def embed(data_loader, model):
 
 def eval_cnn():
     model = Model(is_bulk=True)
+    
+    # load pickle lists containing the paths to each image set
+    with open("/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_imgs.dat", 'rb') as f:
+        train_set = pickle.load(f)
+        f.close()
+    with open("/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/validation_queries.dat", 'rb') as f:
+        val_set = pickle.load(f)
+        f.close()
 
-    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
-    val_set = glob.glob("/shared/data/Hotels-50K/images/val/*/*/*/*")
 
     # Hard coded after we get the query image from running vit first
     query_set = query_set_cnn
 
     # TODO clean up duplicated code (did this so its easier to use both models)
 
-    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(model.transform),
+    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(model.transform),
                                           camera_type_dict=None)
-    val_folder = TraffickcamFolderPaths_50k(val_set, classes=train_folder.classes,
+    val_folder = TraffickcamFolderPaths(val_set, classes=train_folder.classes,
                                         transform=transforms.Compose(model.transform))
-    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
                                           transform=transforms.Compose(model.transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -103,7 +109,7 @@ def eval_cnn():
     val_embeddings, test_labels, test_paths = embed(loaders_dict['val'], model.model)
     query_embeddings, val_labels, val_paths = embed(loaders_dict['query'], model.model)
 
-    distances, indices, nearest_paths = get_distance(query_embeddings, val_embeddings, val_set)
+    distances, indices, nearest_paths = get_distance(query_embeddings, val_embeddings, list(val_set))
 
     print("Distances:", distances)
     print("Indices:", indices)
@@ -141,18 +147,25 @@ def eval_vit():
     test_transform = [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(),
                       normalize]
 
-    train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
-    val_set = glob.glob("/shared/data/Hotels-50K/images/val/*/*/*/*")
-    query_set = glob.glob("/shared/data/Hotels-50K/images/val_query/*/*/*/*")
+    # load pickle lists containing the paths to each image set
+    with open("/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_imgs.dat", 'rb') as f:
+        train_set = pickle.load(f)
+        f.close()
+    with open("/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/validation_queries.dat", 'rb') as f:
+        val_set = pickle.load(f)
+        f.close()
+    with open("/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/gallery_imgs.dat", 'rb') as f:
+        query_set = pickle.load(f)
+        f.close()
 
     # Get one query image to embed
     query_set = random.sample(query_set, 1)
 
-    train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(train_transforms),
+    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=None)
-    val_folder = TraffickcamFolderPaths_50k(val_set, classes=train_folder.classes,
+    val_folder = TraffickcamFolderPaths(val_set, classes=train_folder.classes,
                                          transform=transforms.Compose(test_transform))
-    query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
+    query_folder = TraffickcamFolderPaths(query_set, classes=train_folder.classes,
                                         transform=transforms.Compose(test_transform))
 
     # Setup DataLoaders for torch to iterate through
@@ -167,7 +180,7 @@ def eval_vit():
     val_embeddings, test_labels, test_paths = embed(loaders_dict['val'], model)
     query_embeddings, val_labels, val_paths = embed(loaders_dict['query'], model)
 
-    distances, indices, nearest_paths = get_distance(query_embeddings, val_embeddings, val_set)
+    distances, indices, nearest_paths = get_distance(query_embeddings, val_embeddings, list(val_set))
 
     # print("Distances:", distances)
     # print("Indices:", indices)

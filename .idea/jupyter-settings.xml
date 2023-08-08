@@ -3,10 +3,18 @@
   <component name="JupyterPersistentConnectionParameters">
     <option name="moduleParameters">
       <map>
+        <entry key="$USER_HOME$/PycharmProjects/dsProject/.idea/dsProject.iml">
+          <value>
+            <JupyterConnectionParameters>
+              <option name="managed" value="true" />
+            </JupyterConnectionParameters>
+          </value>
+        </entry>
         <entry key="$PROJECT_DIR$/.idea/tcam_training.iml">
           <value>
             <JupyterConnectionParameters>
               <option name="managed" value="true" />
+              <option name="runConfigurationId" value="Jupyter Server.Jupyter Managed Server" />
             </JupyterConnectionParameters>
           </value>
         </entry>

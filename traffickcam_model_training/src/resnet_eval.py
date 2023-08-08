@@ -46,9 +46,6 @@ def get_resnet():
     train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
     query_set = glob.glob('/shared/data/Hotels-50K/images/test/*/*/*/*')
 
-    # train_set = random.sample(train_set, 1000)
-    # query_set = random.sample(query_set, 1000)
-
     # Load the dataset through TraffickCamFolderPaths to retrieve paths, labels and targets
     train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(model.transform),
                                           camera_type_dict=None)
@@ -111,9 +108,6 @@ def get_vit():
     train_set = glob.glob("/shared/data/Hotels-50K/images/train/*/*/*/*")
     query_set = glob.glob("/shared/data/Hotels-50K/images/test/*/*/*/*")
 
-    # train_set = random.sample(train_set, 1000)
-    # query_set = random.sample(query_set, 1000)
-
     train_folder = TraffickcamFolderPaths_50k(train_set, transform=transforms.Compose(train_transforms),
                                           camera_type_dict=None)
     query_folder = TraffickcamFolderPaths_50k(query_set, classes=train_folder.classes,
@@ -161,22 +155,6 @@ def eval_model(model, loaders, accuracy_dict, acc_calculator):
     print('Val accuracy: {}'.format(accuracies))
 
     torch.cuda.empty_cache()
-
-
-# def embed(data_loader, model):
-#     all_embeddings = torch.Tensor([])
-#     all_labels = torch.Tensor([])
-#     all_paths = []
-#
-#     model.eval()
-#     with torch.no_grad():
-#         for i, (inputs, labels, paths) in enumerate(data_loader):
-#             inputs = inputs.cuda()
-#             embeddings = model(inputs)
-#             all_embeddings = torch.cat((all_embeddings, embeddings.detach().cpu()))
-#             all_labels = torch.cat((all_labels, labels))
-#             all_paths = all_paths + paths
-#     return all_embeddings.numpy(), all_labels.numpy(), all_paths
 
 # Optimized embedding function
 def embed(data_loader, model):
@@ -256,7 +234,7 @@ def get_accuracies(acc_calculator, ref_embeddings, query_embeddings, ref_labels,
 
     return overall_accuracy, knn_labels
 
-
+# ResNet-50 Model
 class Model:
     def __init__(self, is_bulk):
         # Initialize the network graph and loads the weights

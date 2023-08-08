@@ -26,21 +26,23 @@ from pytorch_metric_learning.utils import accuracy_calculator
 from resnet_eval import Model
 
 
-checkpoint_path = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_25_648000_checkpoint.pth.tar'
+checkpoint_path = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_EPHN_checkpoint.pth.tar'
 
-training_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_imgs.dat'
-gallery_imgs = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/gallery_imgs.dat'
-val_query_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/validation_queries.dat'
-train_query_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_queries.dat'
+# Path to the image splits of where the file locations are contained
+training_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_imgs.dat'
+gallery_imgs = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/gallery_imgs.dat'
+val_query_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/validation_queries.dat'
+train_query_images = '/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_queries.dat'
 
 def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(x) for x in [0, 1])
     device = torch.device("cuda")
     print(device)
+    print("Evaluating on Tcam Dataset")
 
     start = time.time()
-    #get_vit()
-    get_resnet()
+    get_vit()
+    #get_resnet()
 
     end = time.time()
     print("Elapsed time: {}".format(end - start))
@@ -66,6 +68,7 @@ def get_vit():
 
     model.load_state_dict(state_dict)
 
+    # Since images are the same size use this for increased speed
     cudnn.benchmark = True
 
     # Specify image transforms
@@ -73,10 +76,10 @@ def get_vit():
                                      std=[0.229, 0.224, 0.225])
     rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
     color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [transforms.Resize(224), transforms.RandomCrop(224),
+    train_transforms = [transforms.Resize(256), transforms.RandomCrop(224),
                         rotate, color_jitter, transforms.RandomHorizontalFlip(),
                         transforms.ToTensor(), normalize]
-    test_transforms = [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
+    test_transforms = [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(), normalize]
 
 
     # load pickle lists containing the paths to each image set

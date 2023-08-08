@@ -1,3 +1,10 @@
+"""
+This script creates the 4 .dat file image splits for tcam training.
+Make sure to specify the paths properly in the arguments below the imports
+to the correct directory.
+"""
+
+
 import argparse
 import os
 import random
@@ -5,7 +12,7 @@ import pickle
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--directory', default='/shared/data/Traffickcam')
+parser.add_argument('--directory', default='/shared/data/tcam_mini')
 parser.add_argument('--info', default='/shared/data/Traffickcam/hotelimageinfo.pkl')
 args = parser.parse_args()
 
@@ -81,8 +88,8 @@ if __name__ == '__main__':
     print("gallery, train_queries, validation_queries")
     print(len(gallery), len(train_queries), len(validation_queries))
 
-    d = {'gallery_imgs.dat': gallery, 'train_imgs.dat': train, 'validation_queries.dat': validation_queries,
-         'train_queries.dat': train_queries}
+    d = {'S5_gallery_imgs.dat': gallery, 'S5_train_imgs.dat': train, 'S5_validation_queries.dat': validation_queries,
+         'S5_train_queries.dat': train_queries}
 
     assert gallery.isdisjoint(train_queries) and \
            gallery.isdisjoint(validation_queries) and \

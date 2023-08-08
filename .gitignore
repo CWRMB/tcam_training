@@ -1,0 +1,16 @@
+# Ignore all .dat files sicne they are to large
+*.dat
+
+# Ignore the log files
+logs/
+
+# Ignore the enviroment file
+*.sif
+
+# Ignore all the saved weights since these files are to large for git
+saved_models/
+models/
+models_ephn/
+
+# Ignore neptune directory
+.neptune/

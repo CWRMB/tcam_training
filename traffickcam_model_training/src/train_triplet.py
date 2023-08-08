@@ -12,6 +12,9 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.models as models
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+import torch.multiprocessing as mp
 
 from timm import *
 import random
@@ -40,25 +43,25 @@ def str2bool(v):
 
 parser = argparse.ArgumentParser(description='PyTorch Traffickcam Training')
 parser.add_argument('--training_images',
-                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_imgs.dat', type=str,
+                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_imgs.dat', type=str,
                     help='pickle list of images used to train model')
 parser.add_argument('--val_query_images',
-                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/validation_queries.dat',
+                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/validation_queries.dat',
                     type=str,
                     help='pickle list of validation images used for queries to measure accuracy')
 parser.add_argument('--train_query_images',
-                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_queries.dat',
+                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_queries.dat',
                     type=str,
                     help='set of training images used for queries to measure accuracy')
 parser.add_argument('--gallery_images',
-                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/gallery_imgs.dat',
+                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/gallery_imgs.dat',
                     type=str,
                     help='set of training images that are used in the gallery to measure train and validation accuracy')
 parser.add_argument('--capture_id_file', default=None, type=str,
                     help='Pandas DF for image capture')
 parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=32, type=int, metavar='N',
+parser.add_argument('--epochs', default=34, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -66,7 +69,7 @@ parser.add_argument('--percent_masked', default=.4, type=float,
                     help='percent of each image masked during training')
 parser.add_argument('--batch_duplication', default=False, type=bool,
                     help='whether or not to duplicate batches with masked images')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N', help='mini-batch size (before duplication)')
 parser.add_argument('--lr', '--learning-rate', default=0.00001, type=float,
                     metavar='LR', help='initial learning rate')
@@ -76,10 +79,10 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--compute_accuracy_freq', default=6000, type=int,
+parser.add_argument('--compute_accuracy_freq', default=10000, type=int,
                     help='after this many global steps accuracy is computed and model saved')
 parser.add_argument('--resume',
-                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_checkpoint.pth.tar',
+                    default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/models/latest_25_648000_checkpoint.pth.tar',
                     type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -100,7 +103,7 @@ parser.add_argument('--name', default='vidarlab/tcamTraining',
                     help='Experiment name for logger')
 parser.add_argument('--tags', default=['FullTraffickCam'], type=str, nargs='*',
                     help='Tags to be sent to logger')
-parser.add_argument('--loss', default='triplet_margin_loss', type=str,
+parser.add_argument('--loss', default='ephn_loss', type=str,
                     help='loss to be used in training, choose one of {}'.format(loss.names()))
 parser.add_argument('--model', default='vit_base_patch16', type=str,
                     help='model to be used in training, choose one of {}'
@@ -116,165 +119,214 @@ parser.add_argument('--input_size', default=224, type=int,
 parser.add_argument('--resize', default=256, type=int,
                     help='resize image in transforms')
 
+# Important for communication between nodes
+# In this case we do not need TCP communication since its a single node containing 8 GPUS
+def setup_ddp(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
 
-def main():
-    # torch.cuda.empty_cache()
-    global args, global_step
-    global_step = 1
-    args = parser.parse_args()
-    print(args)
-    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(x) for x in args.gpu)
-    device = torch.device("cuda" if args.use_gpu else "cpu")
-    print(device)
-    os.environ[
-        'NEPTUNE_API_TOKEN'] = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJjMzhhZjM5OS1kZjdjLTQ3MzAtODcyMS0yN2JiMWQyNDhhMGYifQ=="
+    #Init the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-    model = models.vit_base_patch16_224_in21k(pretrained=True)
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(rank)
 
-    model.head = torch.nn.Identity()
+    torch.cuda.set_device(rank)
 
-    model.cuda()
+# Spawn the multi processes (main)
+def run_demo(demo_fn, world_size):
+    mp.spawn(demo_fn, args=(world_size,), nprocs=world_size, join=True)
 
-    model = torch.nn.DataParallel(model)
-    available_gpus = [torch.cuda.device(i) for i in range(torch.cuda.device_count())]
-    print("GPUS", available_gpus)
-    accuracies_dict = {'train': {}, 'val': {}}
 
-    loss_func = loss.create(args.loss, margin=args.margin)
-    optimizer = torch.optim.Adam(model.parameters(), args.lr)
+# Call cleanup after everything finishes
+def cleanup():
+    dist.destroy_process_group()
 
-    # anything that can be modified with arguments
-    params = {
-        'learning_rate': args.lr,
-        'pretrained': args.pretrained,
-        'optimizer': 'Adam',
-        'margin': args.margin,
-        'batch_size': args.batch_size,
-        'group_size': args.m,
-        'percent_masked': args.percent_masked if args.batch_duplication else None,
-        'loss': args.loss,
-        'model': args.model,
-        'using_batch_duplication': args.batch_duplication,
-        'input_size': args.input_size,
-    }
 
-    # logger = neptune.init_run(project=args.name)
-    logger = neptune.init_run(project=args.name, with_id="TCAM-58")
-    logger["parameters"] = params
+def main(rank, world_size):
+    try:
+        setup_ddp(rank, world_size)
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            model.load_state_dict(checkpoint['state_dict'])
-            global_step = checkpoint['global_step']
-            global_step += 1
-            # accuracies_dict = checkpoint['accuracies']
-            if args.keep_opt_parameters:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {}, global step {})"
-                  .format(args.resume, checkpoint['epoch'], global_step))
+        global args, global_step
+        global_step = 1
+        args = parser.parse_args()
+        print(args)
+        # os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(str(x) for x in args.gpu)
+        device = torch.device("cuda" if args.use_gpu else "cpu")
+
+        print(device)
+        # Neptune API Token
+        os.environ[
+            'NEPTUNE_API_TOKEN'] = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJjMzhhZjM5OS1kZjdjLTQ3MzAtODcyMS0yN2JiMWQyNDhhMGYifQ=="
+
+        model = models.vit_base_patch16_224_in21k(pretrained=True)
+
+        model.head = torch.nn.Identity()
+
+        # Move model to GPU with specific rank
+        model = model.to(rank)
+        # Replace Data Parallel with DDP
+        #model = DDP(model, device_ids=[rank])
+        model = DDP(model, device_ids=[rank], output_device=rank)
+
+        #model = torch.nn.DataParallel(model)
+
+        available_gpus = [torch.cuda.device(i) for i in range(torch.cuda.device_count())]
+        print("GPUS", available_gpus)
+        accuracies_dict = {'train': {}, 'val': {}}
+
+        # loss_func = loss.create(args.loss, margin=args.margin)
+        # EPHN loss
+        loss_func = loss.create(args.loss)
+        optimizer = torch.optim.Adam(model.parameters(), args.lr)
+
+        # anything that can be modified with arguments
+        params = {
+            'learning_rate': args.lr,
+            'pretrained': args.pretrained,
+            'optimizer': 'Adam',
+            'margin': args.margin,
+            'batch_size': args.batch_size,
+            'group_size': args.m,
+            'percent_masked': args.percent_masked if args.batch_duplication else None,
+            'loss': args.loss,
+            'model': args.model,
+            'using_batch_duplication': args.batch_duplication,
+            'input_size': args.input_size,
+        }
+
+        #logger = neptune.init_run(project=args.name)
+        if rank == 0:
+            #logger = neptune.init_run(project=args.name, with_id="TCAM-63")
+            logger = neptune.init_run(project=args.name, with_id="TCAM-58")
+            logger["parameters"] = params
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            logger = None
+        # optionally resume from a checkpoint
+        if args.resume:
+            if os.path.isfile(args.resume):
+                print("=> loading checkpoint '{}'".format(args.resume))
+                checkpoint = torch.load(args.resume)
+                args.start_epoch = checkpoint['epoch']
+                model.load_state_dict(checkpoint['state_dict'])
+                global_step = checkpoint['global_step']
+                global_step += 1
+                # accuracies_dict = checkpoint['accuracies']
+                if args.keep_opt_parameters:
+                    optimizer.load_state_dict(checkpoint['optimizer'])
+                print("=> loaded checkpoint '{}' (epoch {}, global step {})"
+                    .format(args.resume, checkpoint['epoch'], global_step))
+            else:
+                print("=> no checkpoint found at '{}'".format(args.resume))
 
-    cudnn.benchmark = True
+        cudnn.benchmark = True
 
-    # Specify image transforms
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
-    color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
-    train_transforms = [transforms.Resize(args.resize), transforms.RandomCrop(args.input_size), rotate, color_jitter,
-                        transforms.RandomHorizontalFlip(),
-                        transforms.ToTensor(), normalize]
-    test_transforms = [transforms.Resize(args.resize), transforms.CenterCrop(args.input_size), transforms.ToTensor(), normalize]
+        # Specify image transforms
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        rotate = transforms.RandomApply([transforms.RandomRotation((-35, 35))], p=.2)
+        color_jitter = transforms.RandomApply([transforms.ColorJitter(brightness=.25, hue=.15, saturation=.05)], p=.4)
+        train_transforms = [transforms.Resize(224), transforms.RandomCrop(args.input_size), rotate, color_jitter,
+                            transforms.RandomHorizontalFlip(),
+                            transforms.ToTensor(), normalize]
+        test_transforms = [transforms.Resize(224), transforms.CenterCrop(args.input_size), transforms.ToTensor(), normalize]
 
-    # load pickle lists containing the paths to each image set
-    with open(args.training_images, 'rb') as f:
-        train_set = pickle.load(f)
-        f.close()
-    with open(args.gallery_images, 'rb') as f:
-        gallery_images = pickle.load(f)
-        f.close()
-    with open(args.val_query_images, 'rb') as f:
-        val_queries = pickle.load(f)
-        f.close()
-    with open(args.train_query_images, 'rb') as f:
-        train_queries = pickle.load(f)
-        f.close()
-
-    # load capture_id file and convert it to dictionary
-    if args.capture_id_file:
-        id_to_capture = {}
-        with open(args.capture_id_file, 'rb') as f:
-            df = pickle.load(f)
+        # load pickle lists containing the paths to each image set
+        with open(args.training_images, 'rb') as f:
+            train_set = pickle.load(f)
             f.close()
-            ids, captures = df['id'].values, df['capture_method_id'].values
-            for i in range(len(ids)):
-                id_to_capture[str(ids[i])] = captures[i]
-    else:
-        id_to_capture = None
+        with open(args.gallery_images, 'rb') as f:
+            gallery_images = pickle.load(f)
+            f.close()
+        with open(args.val_query_images, 'rb') as f:
+            val_queries = pickle.load(f)
+            f.close()
+        with open(args.train_query_images, 'rb') as f:
+            train_queries = pickle.load(f)
+            f.close()
 
-    # Skip .txt invalid image formats within the file directory
-    train_set = [file for file in train_set if not file.endswith(".txt")]
-    gallery_images = [file for file in gallery_images if not file.endswith(".txt")]
-    val_queries = [file for file in val_queries if not file.endswith(".txt")]
-    train_queries = [file for file in train_queries if not file.endswith(".txt")]
+        # load capture_id file and convert it to dictionary
+        if args.capture_id_file:
+            id_to_capture = {}
+            with open(args.capture_id_file, 'rb') as f:
+                df = pickle.load(f)
+                f.close()
+                ids, captures = df['id'].values, df['capture_method_id'].values
+                for i in range(len(ids)):
+                    id_to_capture[str(ids[i])] = captures[i]
+        else:
+            id_to_capture = None
 
-    train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
-                                          camera_type_dict=id_to_capture)
-    val_query_folder = TraffickcamFolderPaths(val_queries, classes=train_folder.classes,
-                                              transform=transforms.Compose(test_transforms))
-    train_query_folder = TraffickcamFolderPaths(train_queries, classes=train_folder.classes,
+        # Skip .txt invalid image formats within the file directory
+        train_set = [file for file in train_set if not file.endswith(".txt")]
+        gallery_images = [file for file in gallery_images if not file.endswith(".txt")]
+        val_queries = [file for file in val_queries if not file.endswith(".txt")]
+        train_queries = [file for file in train_queries if not file.endswith(".txt")]
+
+        # Prepend /scratch to access sleipnir 5 storage of Tcam dataset
+        train_set = ["/scratch" + file for file in train_set]
+        gallery_images = ["/scratch" + file for file in gallery_images]
+        val_queries = ["/scratch" + file for file in val_queries]
+        train_queries = ["/scratch" + file for file in train_queries]
+
+
+        train_folder = TraffickcamFolderPaths(train_set, transform=transforms.Compose(train_transforms),
+                                            camera_type_dict=id_to_capture)
+        val_query_folder = TraffickcamFolderPaths(val_queries, classes=train_folder.classes,
                                                 transform=transforms.Compose(test_transforms))
-    gallery_folder = TraffickcamFolderPaths(gallery_images, classes=train_folder.classes,
-                                            transform=transforms.Compose(test_transforms))
+        train_query_folder = TraffickcamFolderPaths(train_queries, classes=train_folder.classes,
+                                                    transform=transforms.Compose(test_transforms))
+        gallery_folder = TraffickcamFolderPaths(gallery_images, classes=train_folder.classes,
+                                                transform=transforms.Compose(test_transforms))
 
-    print('Train folders created')
-    if args.capture_id_file:
-        # sample equal number of mobile-app and Expedia images per class per batch
-        sampler = TraffickcamSampler(train_folder.targets, train_folder.capture_method_ids, args.m,
-                                     length_before_new_iter=len(train_folder))
-    else:
-        # does not sample same number of mobile-app and Expedia images per class per batch
-        sampler = samplers.MPerClassSampler(train_folder.targets, args.m, length_before_new_iter=len(train_folder))
+        print('Train folders created')
+        if args.capture_id_file:
+            # sample equal number of mobile-app and Expedia images per class per batch
+            sampler = TraffickcamSampler(train_folder.targets, train_folder.capture_method_ids, args.m,
+                                        length_before_new_iter=len(train_folder))
+        else:
+            # does not sample same number of mobile-app and Expedia images per class per batch
+            sampler = samplers.MPerClassSampler(train_folder.targets, args.m, length_before_new_iter=len(train_folder))
 
-    train_loader = torch.utils.data.DataLoader(train_folder, batch_size=args.batch_size, shuffle=False, sampler=sampler,
-                                               num_workers=args.workers, pin_memory=True)
-    val_query_loader = torch.utils.data.DataLoader(val_query_folder, batch_size=args.batch_size, shuffle=False,
-                                                   num_workers=args.workers, pin_memory=True)
-    train_query_loader = torch.utils.data.DataLoader(train_query_folder, batch_size=args.batch_size, shuffle=False,
-                                                     num_workers=args.workers, pin_memory=True)
-    gallery_loader = torch.utils.data.DataLoader(gallery_folder, batch_size=args.batch_size, shuffle=False,
-                                                 num_workers=args.workers, pin_memory=True)
+        train_loader = torch.utils.data.DataLoader(train_folder, batch_size=args.batch_size, shuffle=False, sampler=sampler,
+                                                num_workers=args.workers, pin_memory=True)
+        val_query_loader = torch.utils.data.DataLoader(val_query_folder, batch_size=args.batch_size, shuffle=False,
+                                                    num_workers=args.workers, pin_memory=True)
+        train_query_loader = torch.utils.data.DataLoader(train_query_folder, batch_size=args.batch_size, shuffle=False,
+                                                        num_workers=args.workers, pin_memory=True)
+        gallery_loader = torch.utils.data.DataLoader(gallery_folder, batch_size=args.batch_size, shuffle=False,
+                                                    num_workers=args.workers, pin_memory=True)
 
-    print('Loaders created')
-    loaders_dict = {'train': train_loader, 'val_query': val_query_loader, 'train_query': train_query_loader,
-                    'gallery': gallery_loader}
+        print('Loaders created')
+        loaders_dict = {'train': train_loader, 'val_query': val_query_loader, 'train_query': train_query_loader,
+                        'gallery': gallery_loader}
 
-    acc_calculator = AccCalculator(include=(
-        "precision_at_1",
-        "precision_at_5",
-        "precision_at_10",
-        "retrieval_at_1",
-        "retrieval_at_10",
-        "retrieval_at_100",
-        "duplicates",
-        "knn_labels"),
-        k=100)
+        acc_calculator = AccCalculator(include=(
+            "precision_at_1",
+            "precision_at_5",
+            "precision_at_10",
+            "retrieval_at_1",
+            "retrieval_at_10",
+            "retrieval_at_100",
+            "duplicates",
+            "knn_labels"),
+            k=100)
 
-    visualizers = {
-        'tsne': visualizations.create('tsne', logger) if args.tsne else None,
-        'knn_images': visualizations.create('knn_images', logger, args.knn_images) if args.knn_images > 0 else None,
-        'confusion_matrix': visualizations.create('confusion_matrix', logger) if args.confusion_matrix else None,
-    }
-    print('Beginning training')
-    for epoch in range(args.start_epoch, args.epochs):
-        train(model, epoch, loaders_dict, accuracies_dict, loss_func, optimizer, visualizers, acc_calculator, logger,
-              device)
-
+        visualizers = {
+            'tsne': visualizations.create('tsne', logger) if args.tsne else None,
+            'knn_images': visualizations.create('knn_images', logger, args.knn_images) if args.knn_images > 0 else None,
+            'confusion_matrix': visualizations.create('confusion_matrix', logger) if args.confusion_matrix else None,
+        }
+        print('Beginning training')
+        for epoch in range(args.start_epoch, args.epochs):
+            train(model, epoch, loaders_dict, accuracies_dict, loss_func, optimizer, visualizers, acc_calculator, logger,
+                device, rank)
+        
+        # Destroy multi process GPU training
+        cleanup()
+    except Exception as e:
+        print(f"Error occurred: {e}")
+    finally:
+        cleanup()
 
 def generate_random_masks(data, percentage):
     h, w = data.shape[2], data.shape[3]
@@ -292,139 +344,80 @@ def generate_random_masks(data, percentage):
     return data * torch.tensor(mask, dtype=torch.float)
 
 
-def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizers, acc_calculator, logger, device):
-    global global_step
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
+def train(model, epoch, loaders, accuracy_dict, loss_func, optimizer, visualizers, acc_calculator, logger, device, rank):
+    try:
+        global global_step
+        batch_time = AverageMeter()
+        data_time = AverageMeter()
+        losses = AverageMeter()
 
-    print('Meters created')
-    # switch to train mode
-    model.train()
-    print('Model switched to train mode')
-    end = time.time()
-    print('Loader enumerated')
-    i = 0
-    for input, target, _ in loaders['train']:
-        # compute accuracy
-        if global_step % args.compute_accuracy_freq == 0:
-            # outputs = {
-            #     'train': {},
-            #     'validation': {},
-            #     'gallery': {}
-            # }
-            #
-            # print('Computing accuracy for global step: {}'.format(global_step))
-            # is_best = False
-            # query_embeddings, query_labels, query_paths = embed(loaders['train_query'], model)
-            # gal_embeddings, gal_labels, gal_paths = embed(loaders['gallery'], model)
-            # accuracies, knn_labels = get_accuracies(acc_calculator, gal_embeddings, query_embeddings, gal_labels,
-            #                                         query_labels)
-            #
-            # print(gal_labels[0]), print(gal_paths[0])
-            #
-            # outputs['training'] = {
-            #     'embeddings': query_embeddings,
-            #     'labels': query_labels,
-            #     'paths': query_paths,
-            #     'knn_labels': knn_labels
-            # }
-            # outputs['gallery'] = {
-            #     'embeddings': gal_embeddings,
-            #     'labels': gal_labels,
-            #     'paths': gal_paths
-            # }
-            #
-            # accuracy_dict['train'][global_step] = accuracies
-            # log_accuracies('train', accuracies[:3], logger)
-            # logger["Train/duplicates"].append(accuracies[3])
-            # print('Train accuracy: {}'.format(accuracies))
-            # torch.cuda.empty_cache()
-            #
-            # k_index = 0  # Which accuracy@k to use to determine best model, 0 = R@1, 1 = R@10, 2 = R@100
-            # best_acc = 0
-            # prev_val_accuracies = accuracy_dict['val']
-            # for entry in prev_val_accuracies:
-            #     if prev_val_accuracies[entry][k_index] > best_acc:
-            #         best_acc = prev_val_accuracies[entry][k_index]
-            #
-            # query_embeddings, query_labels, query_paths = embed(loaders['val_query'], model)
-            # accuracies, knn_labels = get_accuracies(acc_calculator, gal_embeddings, query_embeddings, gal_labels,
-            #                                         query_labels)
-            # outputs['validation'] = {
-            #     'embeddings': query_embeddings,
-            #     'labels': query_labels,
-            #     'paths': query_paths,
-            #     'knn_labels': knn_labels
-            # }
-            #
-            # accuracy_dict['val'][global_step] = accuracies
-            # log_accuracies('val', accuracies[:3], logger)
-            # logger["Val/duplicates"].append(accuracies[3])
-            # print('Val accuracy: {}'.format(accuracies))
-            # if accuracies[k_index] > best_acc:
-            #     is_best = True
-            torch.cuda.empty_cache()
-            #
-            print('Saving model for global step {}'.format(global_step))
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'global_step': global_step
-            }, logger, is_best=False)
-            #
-            # for visualizer in visualizers.values():
-            #     if visualizer is not None:
-            #         try:
-            #             visualizer.log(outputs)
-            #         except Exception as e:
-            #             print("Something went wrong with", visualizer)
-            #             print(e)
-            #
-            # model.train()
-
-        data_time.update(time.time() - end)
-
-        # batch duplication with occluded masks
-        if args.batch_duplication:
-            masked_batch = generate_random_masks(input, args.percent_masked)
-            input = torch.cat([input, masked_batch])
-            target = target.repeat(2)
-        target = target.to(device)
-        input = input.to(device)
-        # compute output
-        model_output = model(input)
-        loss = loss_func(model_output, target)
-
-        # record loss
-        logger["Train/loss"].append(loss.item())
-        losses.update(loss.item(), input.size(0))
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
+        print('Meters created')
+        # switch to train mode
+        model.train()
+        print('Model switched to train mode')
         end = time.time()
+        print('Loader enumerated')
+        i = 0
+        for input, target, _ in loaders['train']:
+            # compute accuracy
+            if global_step % args.compute_accuracy_freq == 0:
+                torch.cuda.empty_cache()
 
-        global_step += 1
+                print('Saving model for global step {}'.format(global_step))
 
-        torch.cuda.empty_cache()
-        if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
-                epoch, i, len(loaders['train']), batch_time=batch_time,
-                data_time=data_time, loss=losses)
-            )
-        i += 1
+                if rank == 0:
+                    save_checkpoint({
+                        'epoch': epoch + 1,
+                        'state_dict': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'global_step': global_step
+                    }, logger, is_best=False)
 
-    print('Epoch completed')
-    return losses.avg
+            data_time.update(time.time() - end)
+
+            # batch duplication with occluded masks
+            if args.batch_duplication:
+                masked_batch = generate_random_masks(input, args.percent_masked)
+                input = torch.cat([input, masked_batch])
+                target = target.repeat(2)
+            target = target.to(device)
+            input = input.to(device)
+            # compute output
+            model_output = model(input)
+            loss = loss_func(model_output, target)
+
+            # record loss
+            if rank == 0:
+                logger["Train/loss"].append(loss.item())
+            losses.update(loss.item(), input.size(0))
+
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            global_step += 1
+
+            torch.cuda.empty_cache()
+            if i % args.print_freq == 0:
+                print('Epoch: [{0}][{1}/{2}]\t'
+                    'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                    'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                    'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
+                    epoch, i, len(loaders['train']), batch_time=batch_time,
+                    data_time=data_time, loss=losses)
+                )
+            i += 1
+
+        print('Epoch completed')
+        return losses.avg
+    except Exception as e:
+        # Raise exception in main
+        raise e
 
 
 def embed(data_loader, model):
@@ -443,9 +436,9 @@ def embed(data_loader, model):
     return all_embeddings.numpy(), all_labels.numpy(), all_paths
 
 
-def save_checkpoint(state, logger, is_best, filename='checkpoint.pth.tar'):
-    #torch.save(state, './models/latest_{}'.format(filename))
-    torch.save(state, './models/latest_{}_{}_{}'.format(state['epoch'], state['global_step'], filename))
+def save_checkpoint(state, logger, is_best, filename='EPHN_checkpoint.pth.tar'):
+    torch.save(state, './models/latest_{}'.format(filename))
+    #torch.save(state, './models/latest_{}_{}_{}'.format(state['epoch'], state['global_step'], filename))
     if is_best:
         shutil.copyfile('./models/latest_{}'.format(filename), './models/best_{}'.format(filename))
 
@@ -543,4 +536,7 @@ class SqueezeLastLayer(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    main()
+    print("Available GPU Count:", torch.cuda.device_count())
+    # World size is equal to the num of GPUS
+    world_size = 8
+    run_demo(main, world_size)

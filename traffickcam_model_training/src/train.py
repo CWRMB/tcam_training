@@ -42,13 +42,13 @@ def str2bool(v):
 
 
 parser = argparse.ArgumentParser(description='PyTorch Traffickcam Training')
-parser.add_argument('--training_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_imgs.dat', type=str,
+parser.add_argument('--training_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_imgs.dat', type=str,
                     help='pickle list of images used to train model')
-parser.add_argument('--val_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/validation_queries.dat', type=str,
+parser.add_argument('--val_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/validation_queries.dat', type=str,
                     help='pickle list of validation images used for queries to measure accuracy')
-parser.add_argument('--train_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/train_queries.dat', type=str,
+parser.add_argument('--train_query_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/train_queries.dat', type=str,
                     help='set of training images used for queries to measure accuracy')
-parser.add_argument('--gallery_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/src/gallery_imgs.dat', type=str,
+parser.add_argument('--gallery_images', default='/home/tun78940/tcam/tcam_training/traffickcam_model_training/sets/gallery_imgs.dat', type=str,
                     help='set of training images that are used in the gallery to measure train and validation accuracy')
 parser.add_argument('--capture_id_file', default=None, type=str,
                     help='Pandas DF for image capture')

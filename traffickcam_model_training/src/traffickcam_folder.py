@@ -1,5 +1,5 @@
 import os
-
+import numpy as np
 import torch
 from torchvision.datasets.folder import default_loader
 
